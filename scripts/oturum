@@ -1,0 +1,223 @@
+#!/usr/bin/env bash
+# Bu araç @keyiflerolsun tarafından | @KekikAkademi için yazılmıştır.
+
+# tmux-oturum: yerel makinenin ve Tailscale'deki makinelerin tmux oturumları tek listede. Makine listesi her açılışta
+# `tailscale status`tan gelir (açık, Linux, Tailscale SSH'ı olan); hiçbir dosyada makine adı tutulmaz. Tailscale dışındaki
+# makineler @oturum-makineler'e ssh config adıyla yazılır.
+#   oturum                       arayüz: tmux içinde prefix g açılır penceresi, dışında zsh'taki ts. Uzak oturuma geçiş iç içe
+#                                tmux açmaz: terminal uzak tmux'a geçer, oradan prefix d ile yerel oturuma döner.
+#   oturum liste                 fzf satırları "kimlik<TAB>görünen"
+#   oturum dizinler <kimlik>     satırın makinesindeki dizinler (DIZIN_KOMUTU)
+#   oturum onizle | kapat | adlandir | baglan <kimlik>
+# Kimlik "makine|ne": makine "yerel", Tailscale ya da ssh config adı; ne "=oturum", "dizin|/yol", "yeni|ad" ya da "+" (makinede yeni oturum).
+
+BEN="$(readlink -f "${BASH_SOURCE[0]}")"
+secenek() { local deger; deger=$(tmux show-option -gqv "$1" 2>/dev/null); echo "${deger:-$2}"; }
+# Bağlantı ilk açılıştan sonra 10 dk açık kalır (ControlMaster): sonraki liste ve önizlemeler beklemez.
+SSH=(ssh -o BatchMode=yes -o ConnectTimeout=3 -o ControlMaster=auto -o "ControlPath=${XDG_RUNTIME_DIR:-/tmp}/tmux-oturum-%C"
+     -o ControlPersist=10m)
+# Ek makineler ssh config'teki gibi bağlanır (kullanıcı, port, anahtar oradan); Tailscale'den gelenlere root ile
+EK=" $(secenek @oturum-makineler '') "
+# Oturum (O) ve pencere (P) satırları; ikisi de oturumun etkinliğini taşır, sıralamada pencere oturumunun altına düşer
+FMT_O=$'O\t#{session_activity}\t#{session_name}\t#{session_windows}\t#{session_attached}'
+FMT_P=$'P\t#{session_activity}\t#{session_name}\t#{window_index}\t#{window_name}\t#{window_active}'
+LISTE_KOMUTU="tmux list-sessions -F '$FMT_O' 2>/dev/null; tmux list-windows -a -F '$FMT_P' 2>/dev/null"
+YEREL=$(uname -n)
+# Dracula: makine yeşil (yerel) / camgöbeği (uzak), oturum kalın, ayrıntı soluk, bağlı pembe, dizin mor
+R=$'\e[0m' KALIN=$'\e[1m' SOLUK=$'\e[38;2;98;114;164m' YESIL=$'\e[38;2;80;250;123m' CAMGOBEGI=$'\e[38;2;139;233;253m'
+PEMBE=$'\e[38;2;255;121;198m' MOR=$'\e[38;2;189;147;249m' SARI=$'\e[3;38;2;241;250;140m'
+# Hizalama karakter sayısıyla: yerel ayar UTF-8 değilse ${#ad} baytı sayar, Türkçe harfli ad kayar
+[[ $(locale charmap 2>/dev/null) == UTF-8 ]] || export LC_ALL=C.UTF-8
+# Dizin adayları: ev dizini (ilk satır; görünen yolda ~ olur), zoxide geçmişi (sık kullanılan üstte), ev dizininin iki seviyesi,
+# sonra /opt, /srv, /DATA (casaos) altı; gizli dizinler yok. Sunucularda iş çoğu kez ev dizininde değil (px-proxy, casaos'ta ev dizini boştu).
+DIZIN_KOMUTU='{ echo ~; command -v zoxide >/dev/null && zoxide query -l; find ~ -mindepth 1 -maxdepth 2 -type d -not -path "*/.*" 2>/dev/null
+               find /opt /srv /DATA -mindepth 1 -maxdepth 1 -type d -not -name ".*" 2>/dev/null; } | awk "!g[\$0]++" | head -300'
+
+makineler() {
+    {
+        printf '%s\n' $EK
+        command -v tailscale >/dev/null && command -v jq >/dev/null && tailscale status --json 2>/dev/null \
+            | jq -r '.Peer[]? | select(.Online and .sshHostKeys != null and .OS == "linux") | .DNSName | split(".")[0]'
+    } | awk 'NF && !g[$0]++'
+}
+
+hedef() { [[ $EK == *" $1 "* ]] && echo "$1" || echo "root@$1"; }
+
+# Makinede komut: yerelde doğrudan, uzakta ssh ile. Uzak komut yerel ayarsız koşar: UTF-8 verilmezse tmux sekmeyi ve Türkçe harfi "_" yapar.
+calistir() {
+    local makine=$1; shift
+    if [[ $makine == yerel ]]; then bash -c "$*"; else "${SSH[@]}" "$(hedef "$makine")" "export LC_ALL=C.UTF-8; $*"; fi
+}
+
+# Ham satır "sıra<TAB>makine<TAB>etkinlik<TAB>oturum<TAB>tür<TAB>pencere no<TAB>kimlik<TAB>..." sıralanır: önce yerel, sonra
+# uzaklar ada göre; makinede son kullanılan oturum üstte, pencereleri numara sırasıyla altında, "yeni oturum" (+) en altta.
+ham() {
+    local sira=$1 makine=$2 tur etkinlik ad a b c
+    while IFS=$'\t' read -r tur etkinlik ad a b c; do
+        case $tur in
+            O) printf '%s\t%s\t%s\t%s\t0\t0\t%s|=%s\tO\t%s\t%s\t%s\n' "$sira" "$makine" "$etkinlik" "$ad" "$makine" "$ad" "$ad" "$a" "$b" ;;
+            P) printf '%s\t%s\t%s\t%s\t1\t%s\t%s|=%s:%s\tP\t%s\t%s\t%s\n' "$sira" "$makine" "$etkinlik" "$ad" "$a" "$makine" "$ad" "$a" "$a" "$b" "$c" ;;
+            +) printf '%s\t%s\t0\t~\t2\t0\t%s|+\t+\n' "$sira" "$makine" "$makine" ;;
+        esac
+    done
+}
+
+dolgu() { printf '%s%*s' "$1" $(($2 - ${#1})) ''; }
+
+# Sütunlar en uzun makine ve oturum adına göre hizalanır; pencereler oturumun altında ağaç gibi. fzf'e "kimlik<TAB>renkli görünen" gider.
+bicimle() {
+    local satirlar=() kimlik tur a b c makine genis_m=0 genis_o=0 renk gorunen i sonraki dal
+    while IFS=$'\t' read -r kimlik tur a b c; do
+        makine=${kimlik%%|*}; [[ $makine == yerel ]] && makine=$YEREL
+        satirlar+=("$kimlik"$'\t'"$tur"$'\t'"$a"$'\t'"$b"$'\t'"$c")
+        (( ${#makine} > genis_m )) && genis_m=${#makine}
+        [[ $tur == O ]] && (( ${#a} > genis_o )) && genis_o=${#a}
+    done
+    for i in "${!satirlar[@]}"; do
+        IFS=$'\t' read -r kimlik tur a b c <<<"${satirlar[i]}"
+        makine=${kimlik%%|*}; [[ $makine == yerel ]] && makine=$YEREL
+        [[ $kimlik == yerel\|* ]] && renk=$YESIL || renk=$CAMGOBEGI
+        case $tur in
+            +) gorunen="$SOLUK$(dolgu "$makine" "$genis_m")  + yeni oturum$R  ${SOLUK}ctrl-f: dizin seç$R" ;;
+            O) gorunen="$renk$(dolgu "$makine" "$genis_m")$R  $KALIN$(dolgu "$a" "$genis_o")$R  $SOLUK$(printf "%2s" "$b") pencere$R"
+               (( c > 0 )) && gorunen+="  $PEMBE● bağlı$R" ;;
+            P) # Oturumun son penceresi "└", ötekiler "├"; etkin pencere yeşil nokta
+               IFS=$'\t' read -r _ sonraki _ <<<"${satirlar[i+1]}"
+               [[ $sonraki == P ]] && dal="├" || dal="└"
+               gorunen="$(dolgu "" "$genis_m")  $SOLUK$dal$R $SOLUK$a$R $b"
+               (( c > 0 )) && gorunen+=" $YESIL•$R" ;;
+        esac
+        printf '%s\t%s\n' "$kimlik" "$gorunen"
+    done
+}
+
+liste() {
+    {
+        bash -c "$LISTE_KOMUTU" | ham 0 yerel
+        # Makineler paralel sorulur, her biri en çok 5 sn: kapalı ya da girişte uzun çıktı basan makine listeyi bekletmez. Yalnız
+        # oturum/pencere satırları ve "+" alınır; "+" tmux'u olan her makineye "yeni oturum" satırı ekler (oturumu olmasa da).
+        for makine in $(makineler); do
+            timeout 5 "${SSH[@]}" "$(hedef "$makine")" "export LC_ALL=C.UTF-8; $LISTE_KOMUTU; command -v tmux >/dev/null && echo +" 2>/dev/null \
+                | grep -aE $'^[OP]\t|^\\+$' | ham 1 "$makine" &
+        done
+        wait
+    } | sort -t$'\t' -k1,1n -k2,2 -k3,3rn -k4,4 -k5,5n -k6,6n | cut -f7- | bicimle
+}
+
+dizinler() {
+    local makine=$1 ad=$1 yol ev
+    [[ $makine == yerel ]] && ad=$YEREL
+    [[ $makine == yerel ]] && renk=$YESIL || renk=$CAMGOBEGI
+    calistir "$makine" "$DIZIN_KOMUTU" 2>/dev/null | while IFS= read -r yol; do
+        ev=${ev:-$yol}
+        [[ $yol == "$ev" || $yol == "$ev"/* ]] && gorunen="~${yol#"$ev"}" || gorunen=$yol
+        printf '%s|dizin|%s\t%s%s%s  %s%s%s\n' "$makine" "$yol" "$renk" "$ad" "$R" "$MOR" "$gorunen" "$R"
+    done
+}
+
+# Tuş rehberi: iki satır kısayol (üç sütun), bir satır ipucu (sarı, italik), altında listeyi ayıran çizgi. Satırlar 54 karakter;
+# liste sütunu bundan dar olmaz (onizleme_yeri).
+baslik() {
+    local t=$PEMBE a=$SOLUK
+    tus() { local d=$2; [[ $3 ]] && d=$(dolgu "$2" "$3"); printf '%s%s%s%s%s' "$t" "$(dolgu "$1" 7)" "$R$a" "$d" "$R"; }
+    printf '%s%s%s\n' "$(tus enter bağlan 11)" "$(tus ctrl-x kapat 11)" "$(tus ctrl-r 'ad değiştir')"
+    printf '%s%s%s\n' "$(tus ctrl-f 'dizin seç' 11)" "$(tus ctrl-b oturumlar 11)" "$(tus '?' önizleme)"
+    printf '%sYeni oturum: adını yazıp enter%sa bas%s\n' "$SARI" "'" "$R"
+    printf '%s%s%s' "$a" "$(printf '─%.0s' $(seq 54))" "$R"
+}
+
+# Önizleme: @oturum-onizleme doluysa olduğu gibi fzf'ye gider ("right,60%", "down,50%"). Boşsa sağda %65, ama liste sütunu 62'den
+# (rehber + imleç ve kenar) dar olmaz, önizleme de 30'dan. Genişlik doğrudan terminalden okunur: fzf'nin girdisi boru olduğundan
+# tput burada terminali görmüyor, 80 dönüyordu.
+onizleme_yeri() {
+    local yer sutun boy
+    yer=$(secenek @oturum-onizleme '')
+    [[ $yer ]] && { echo "$yer"; return; }
+    read -r _ sutun < <(stty size </dev/tty 2>/dev/null)
+    boy=$(( ${sutun:-100} * 65 / 100 ))
+    (( ${sutun:-100} - boy < 62 )) && boy=$(( ${sutun:-100} - 62 ))
+    (( boy < 30 )) && boy=30
+    echo "right,$boy"
+}
+
+ad_ver() { basename "$1" | tr '.:' '__'; }
+
+kimlik=$2
+makine=${kimlik%%|*} ne=${kimlik#*|}
+tur=${ne%%|*} deger=${ne#*|}
+case $tur in
+    dizin | yeni) ;;
+    +) tur=arti ;;
+    *) tur=oturum deger=$ne ;;
+esac
+
+case ${1:-arayuz} in
+    liste) liste ;;
+    dizinler) dizinler "${makine:-yerel}" ;;
+    onizle)
+        case $tur in
+            oturum) [[ $deger == *:* ]] || deger+=":"  # "=ad:" oturumun etkin bölmesi, "=ad:N" pencerenin
+                    calistir "$makine" "tmux capture-pane -ep -t '$deger'" ;;
+            dizin) calistir "$makine" "ls -A --color=always '$deger'" ;;
+            arti)
+                printf '%s+ %s: yeni oturum%s\n\n' "$YESIL$KALIN" "$makine" "$R"
+                printf "  $PEMBE%-8s$R%s\n" enter "ev dizininde aç (oturum adı: $makine)" ctrl-f "önce dizin seç"
+                printf '\n%sAynı adla oturum varsa yenisi açılmaz, ona bağlanılır.%s\n' "$SOLUK" "$R" ;;
+        esac ;;
+    kapat)
+        [[ $tur == oturum ]] || exit 0
+        # Pencere satırı yalnız pencereyi kapatır (kapatılamazsa oturuma dokunulmaz)
+        if [[ $deger == *:* ]]; then calistir "$makine" "tmux kill-window -t '$deger'"; else calistir "$makine" "tmux kill-session -t '$deger'"; fi ;;
+    adlandir)
+        [[ $tur == oturum ]] || exit 0
+        read -rp "Yeni ad (${deger#=}): " yeni </dev/tty
+        [[ $yeni ]] || exit 0
+        [[ $deger == *:* ]] && neyi=rename-window || neyi=rename-session
+        calistir "$makine" "tmux $neyi -t '$deger' '$yeni'" ;;
+    baglan)
+        # Yeni oturum dizin ya da ad satırından; aynı adla oturum varsa yenisi açılmaz, ona bağlanılır (-A, yerelde new-session hatası)
+        case $tur in
+            oturum) komut="tmux -u attach -t '$deger'" ;;
+            dizin) ad=$(ad_ver "$deger") dizin=$deger ;;
+            # Uzakta yerel $PWD yoktur: oturum ev dizininde açılır
+            yeni) ad=$(ad_ver "$deger") dizin=""; [[ $makine == yerel ]] && dizin=$PWD ;;
+            arti) ad=$makine dizin="" ;;
+        esac
+        [[ $tur == oturum ]] || komut="tmux -u new-session -A -s '$ad'${dizin:+ -c '$dizin'}"
+        if [[ $makine == yerel && $TMUX ]]; then
+            [[ $tur == oturum ]] || { tmux new-session -ds "$ad" -c "$dizin" 2>/dev/null; deger="=$ad"; }
+            tmux switch-client -t "$deger"
+        elif [[ $makine == yerel ]]; then
+            eval "exec $komut"
+        elif [[ $TMUX ]]; then
+            # İç içe tmux yok: terminaldeki tmux istemcisi uzak oturumla yer değiştirir (detach-client -E). Uzakta prefix d ile
+            # ayrılınca aynı terminal kalınan yerel oturuma döner. Komut kullanıcının kabuğunda koşar: "=ad" zsh'ta tırnaksız açılırdı.
+            IFS=$'\t' read -r soket geri < <(tmux display-message -p $'#{socket_path}\t#{client_session}')
+            tmux detach-client -E "$(printf '%q ' "${SSH[@]}" -t "$(hedef "$makine")" "$komut"); exec tmux -S '$soket' attach -t '=$geri'"
+        else
+            exec "${SSH[@]}" -t "$(hedef "$makine")" "$komut"
+        fi ;;
+    arayuz)
+        # Kabuğun fzf ayarı (--tmux açılır penceresi) burada istenmez: arayüz zaten açılır pencerede ya da tam ekranda
+        eval "ek=($(secenek @oturum-fzf ''))"
+        # ctrl-f ile açılan dizin listesinin makinesi: eşleşmeyen ad + enter yeni oturumu o makinede açar (yoksa yerelde açıyordu)
+        durum=$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/tmux-oturum-durum.XXXXXX")
+        trap 'rm -f "$durum"' EXIT
+        cikti=$("$BEN" liste | FZF_DEFAULT_OPTS='' fzf --ansi --print-query --delimiter '\t' --with-nth 2 --layout reverse \
+            --prompt 'oturum ❯ ' --pointer '▶' --scrollbar '▌▐' \
+            --header "$(baslik)" \
+            --preview "'$BEN' onizle {1}" --preview-window "$(onizleme_yeri)" \
+            --bind "ctrl-x:execute-silent('$BEN' kapat {1})+reload('$BEN' liste)" \
+            --bind "ctrl-r:execute('$BEN' adlandir {1})+reload('$BEN' liste)" \
+            --bind "ctrl-f:execute-silent(printf '%s' {1} > '$durum')+reload('$BEN' dizinler {1})" \
+            --bind "ctrl-b:execute-silent(: > '$durum')+reload('$BEN' liste)" --bind '?:toggle-preview' \
+            "${ek[@]}")
+        [[ $? == 130 ]] && exit 0
+        sorgu=$(sed -n 1p <<<"$cikti")
+        secim=$(sed -n 2p <<<"$cikti" | cut -f1)
+        hedef=$(<"$durum"); hedef=${hedef%%|*}
+        rm -f "$durum"
+        if [[ $secim ]]; then exec "$BEN" baglan "$secim"; elif [[ $sorgu ]]; then exec "$BEN" baglan "${hedef:-yerel}|yeni|$sorgu"; fi ;;
+    *)
+        echo "kullanım: oturum [liste | dizinler | onizle | kapat | adlandir | baglan <kimlik>]" >&2; exit 2 ;;
+esac
