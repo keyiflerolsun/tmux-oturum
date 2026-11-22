@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Sahte tmux: "laptop"un oturumları; ayar sorgusu boş (varsayılanlar)
+case "$*" in
+    *list-sessions*)
+        printf 'O\t300\tnotlar\t1\t0\nO\t200\tblog\t2\t0\n'
+        printf 'P\t300\tnotlar\t1\tzsh\t1\nP\t200\tblog\t1\tnvim\t1\nP\t200\tblog\t2\tzsh\t0\n' ;;
+    *capture-pane*) printf '# notlar\n\n- yedek betiğini gözden geçir\n- nas diskini değiştir\n' ;;
+esac
