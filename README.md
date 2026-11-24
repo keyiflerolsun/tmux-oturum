@@ -38,7 +38,7 @@ aramak o makinenin bütün satırlarını bırakır; bulanık arama için sorgun
 | Tuş | İş |
 |---|---|
 | `enter` | Oturuma ya da pencereye geç; `+ yeni oturum` satırında o makinede yeni oturum; `↺ kayıtlı` satırında oturumu kur ve geç |
-| `ctrl-x` | Oturumu kapat; pencere satırında yalnız pencereyi; `↺ kayıtlı` satırında kaydı unut |
+| `ctrl-x` | Oturumu kaydedip kapat; pencere satırında yalnız pencereyi; `↺ kayıtlı` satırında kaydı unut |
 | `ctrl-r` | Oturumun ya da pencerenin adını değiştir |
 | `ctrl-f` | Satırın makinesinde dizin seç (ev dizini, zoxide geçmişi, `/opt`, `/srv`, …) ve orada yeni oturum aç |
 | `ctrl-b` | Dizinlerden oturum listesine dön |

@@ -354,8 +354,10 @@ case ${1:-arayuz} in
     kapat)
         [[ $tur == kayit ]] && { unut "$deger"; exit 0; }
         [[ $tur == oturum ]] || exit 0
-        # Pencere satırı yalnız pencereyi kapatır
-        if [[ $deger == *:* ]]; then calistir "$makine" "tmux kill-window -t '$deger'"; else calistir "$makine" "tmux kill-session -t '$deger'"; fi ;;
+        # Pencere satırı yalnız pencereyi kapatır. Oturum kapanmadan önce resurrect kaydı alınır (varsa): kayıtlı listesine son
+        # hâliyle düşer, continuum'un 15 dk'lık aralığında yapılan değişiklik kaybolmaz
+        if [[ $deger == *:* ]]; then calistir "$makine" "tmux kill-window -t '$deger'"
+        else calistir "$makine" "k=\$(tmux show-option -gqv @resurrect-save-script-path); [ -x \"\$k\" ] && \"\$k\" quiet; tmux kill-session -t '$deger'"; fi ;;
     adlandir)
         [[ $tur == oturum ]] || exit 0
         # zsh ctrl-g'den açılınca terminal zle'nin ham kipinde (yazılan görünmez); okuma satır kipinde, sonra eski kip
