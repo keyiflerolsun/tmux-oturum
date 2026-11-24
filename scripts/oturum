@@ -7,7 +7,8 @@
 #   oturum dizinler <kimlik>     satırın makinesindeki dizinler
 #   oturum onizle | kapat | adlandir | baglan <kimlik>
 # Kimlik "makine|ne": makine "yerel", Tailscale ya da ssh config adı; ne "=oturum", "=oturum:pencere", "dizin|/yol", "yeni|ad",
-# "yetki" (Tailscale SSH onayı) ya da "+" (makinede yeni oturum).
+# "kayit|ad" (tmux-resurrect'in kaydında olup açık olmayan yerel oturum), "yetki" (Tailscale SSH onayı) ya da "+" (makinede yeni
+# oturum).
 
 BEN="$(readlink -f "${BASH_SOURCE[0]}")"
 secenek() { local deger; deger=$(tmux show-option -gqv "$1" 2>/dev/null); echo "${deger:-$2}"; }
@@ -22,9 +23,9 @@ FMT_O=$'O\t#{session_activity}\t#{session_name}\t#{session_windows}\t#{session_a
 FMT_P=$'P\t#{session_activity}\t#{session_name}\t#{window_index}\t#{window_name}\t#{window_active}'
 LISTE_KOMUTU="tmux list-sessions -F '$FMT_O' 2>/dev/null; tmux list-windows -a -F '$FMT_P' 2>/dev/null; command -v tmux >/dev/null && echo +"
 YEREL=$(uname -n)
-# Dracula: makine yeşil (yerel) / camgöbeği (uzak), oturum kalın, ayrıntı soluk, bağlı pembe, dizin mor
+# Dracula: makine yeşil (yerel) / camgöbeği (uzak), oturum kalın, ayrıntı soluk, bağlı pembe, dizin mor, kayıtlı turuncu
 R=$'\e[0m' KALIN=$'\e[1m' SOLUK=$'\e[38;2;98;114;164m' YESIL=$'\e[38;2;80;250;123m' CAMGOBEGI=$'\e[38;2;139;233;253m'
-PEMBE=$'\e[38;2;255;121;198m' MOR=$'\e[38;2;189;147;249m' SARI=$'\e[3;38;2;241;250;140m'
+PEMBE=$'\e[38;2;255;121;198m' MOR=$'\e[38;2;189;147;249m' SARI=$'\e[3;38;2;241;250;140m' TURUNCU=$'\e[38;2;255;184;108m'
 # Hizalama ${#ad} ile: UTF-8 dışı yerelde bayt sayılır, Türkçe harfli ad kayar
 [[ $(locale charmap 2>/dev/null) == UTF-8 ]] || export LC_ALL=C.UTF-8
 # Ev dizini ilk satır, sonra zoxide geçmişi; sunucularda iş çoğu kez ev dizininde değil, /opt, /srv, /DATA (casaos) da taranır
@@ -59,6 +60,7 @@ ham() {
         case $tur in
             O) printf '%s\t%s\t1\t%s\t%s\t0\t0\t%s|=%s\tO\t%s\t%s\t%s\n' "$sira" "$makine" "$etkinlik" "$ad" "$makine" "$ad" "$ad" "$a" "$b" ;;
             P) printf '%s\t%s\t1\t%s\t%s\t1\t%s\t%s|=%s:%s\tP\t%s\t%s\t%s\n' "$sira" "$makine" "$etkinlik" "$ad" "$a" "$makine" "$ad" "$a" "$a" "$b" "$c" ;;
+            K) printf '%s\t%s\t2\t%s\t%s\t0\t0\t%s|kayit|%s\tK\t%s\t%s\t%s\n' "$sira" "$makine" "$etkinlik" "$ad" "$makine" "$ad" "$ad" "$a" "$b" ;;
             +) printf '%s\t%s\t0\t0\t\t0\t0\t%s|+\t+\n' "$sira" "$makine" "$makine" ;;
             *login.tailscale.com*) printf '%s\t%s\t0\t0\t\t0\t0\t%s|yetki\tY\n' "$sira" "$makine" "$makine" ;;
         esac
@@ -69,29 +71,32 @@ dolgu() { printf '%s%*s' "$1" $(($2 - ${#1})) ''; }
 
 # Sütunlar en uzun makine ve oturum adına göre hizalı; makine adı yalnız makinenin ilk satırında, pencereler oturumun altında ağaç
 bicimle() {
-    local satirlar=() kimlik tur a b c makine onceki genis_m=0 genis_o=0 renk gorunen i sonraki dal
+    local satirlar=() kimlik tur a b c makine tam onceki genis_m=0 genis_o=0 renk govde i sonraki dal
     while IFS=$'\t' read -r kimlik tur a b c; do
         makine=${kimlik%%|*}; [[ $makine == yerel ]] && makine=$YEREL
         satirlar+=("$kimlik"$'\t'"$tur"$'\t'"$a"$'\t'"$b"$'\t'"$c")
         (( ${#makine} > genis_m )) && genis_m=${#makine}
-        [[ $tur == O ]] && (( ${#a} > genis_o )) && genis_o=${#a}
+        [[ $tur == [OK] ]] && (( ${#a} > genis_o )) && genis_o=${#a}
     done
     for i in "${!satirlar[@]}"; do
         IFS=$'\t' read -r kimlik tur a b c <<<"${satirlar[i]}"
-        makine=${kimlik%%|*}; [[ $makine == yerel ]] && makine=$YEREL
+        tam=${kimlik%%|*}; [[ $tam == yerel ]] && tam=$YEREL
         [[ $kimlik == yerel\|* ]] && renk=$YESIL || renk=$CAMGOBEGI
-        [[ ${kimlik%%|*} == "$onceki" ]] && makine="" || onceki=${kimlik%%|*}
+        [[ ${kimlik%%|*} == "$onceki" || $tur == P ]] && makine="" || { makine=$tam; onceki=${kimlik%%|*}; }
         case $tur in
-            +) gorunen="$renk$(dolgu "$makine" "$genis_m")$R  $SOLUK+ yeni oturum$R  ${SOLUK}ctrl-f: dizin seç$R" ;;
-            Y) gorunen="$renk$(dolgu "$makine" "$genis_m")$R  $SARI! Tailscale onayı bekliyor$R  ${SOLUK}enter: onayla$R" ;;
-            O) gorunen="$renk$(dolgu "$makine" "$genis_m")$R  $KALIN$(dolgu "$a" "$genis_o")$R  $SOLUK$(printf "%2s" "$b") pencere$R"
-               (( c > 0 )) && gorunen+="  $PEMBE● bağlı$R" ;;
+            +) govde="$SOLUK+ yeni oturum$R  ${SOLUK}ctrl-f: dizin seç$R" ;;
+            Y) govde="$SARI! Tailscale onayı bekliyor$R  ${SOLUK}enter: onayla$R" ;;
+            O) govde="$KALIN$(dolgu "$a" "$genis_o")$R  $SOLUK$(printf "%2s" "$b") pencere$R"
+               (( c > 0 )) && govde+="  $PEMBE● bağlı$R" ;;
+            K) govde="$TURUNCU$(dolgu "$a" "$genis_o")$R  $SOLUK$(printf "%2s" "$b") pencere$R  $TURUNCU↺ kayıtlı$R $SOLUK$c$R" ;;
             P) IFS=$'\t' read -r _ sonraki _ <<<"${satirlar[i+1]}"
                [[ $sonraki == P ]] && dal="├" || dal="└"
-               gorunen="$(dolgu "" "$genis_m")  $SOLUK$dal$R $SOLUK$a$R $b"
-               (( c > 0 )) && gorunen+=" $YESIL•$R" ;;
+               govde="$SOLUK$dal$R $SOLUK$a$R $b"
+               (( c > 0 )) && govde+=" $YESIL•$R" ;;
         esac
-        printf '%s\t%s\n' "$kimlik" "$gorunen"
+        # 2. alan ağaç (makine adı yalnız ilk satırında), 3. alan aramada: makine adı her satırda, "nas" yazınca nas'ın bütün
+        # oturum ve pencereleri kalır (fzf gizli alanda aramaz, arayüz sorgu yazılınca bu alana geçer)
+        printf '%s\t%s  %s\t%s  %s\n' "$kimlik" "$renk$(dolgu "$makine" "$genis_m")$R" "$govde" "$renk$(dolgu "$tam" "$genis_m")$R" "$govde"
     done
 }
 
@@ -100,7 +105,7 @@ bicimle() {
 # enter yenisini alır.
 liste() {
     {
-        bash -c "$LISTE_KOMUTU" | ham 0 yerel
+        { bash -c "$LISTE_KOMUTU"; kayitlar; } | ham 0 yerel
         for makine in $(makineler); do
             timeout 5 "${SSH[@]}" "$(hedef "$makine")" "export LC_ALL=C.UTF-8; $LISTE_KOMUTU" 2>&1 | tr -d "\r" \
                 | grep -aE $'^[OP]\t|^\\+$|^# To authenticate, visit: https://login\\.tailscale\\.com/' | ham 1 "$makine" &
@@ -109,13 +114,180 @@ liste() {
     } | sort -t$'\t' -k1,1n -k2,2 -k3,3n -k4,4rn -k5,5 -k6,6n -k7,7n | cut -f8- | bicimle
 }
 
+# tmux-resurrect kayıtları: yeri eklentinin kuralıyla (@resurrect-dir; yoksa eski ~/.tmux/resurrect ya da XDG). Dosyalar
+# yeniden eskiye: continuum her kayıtta yalnız açık oturumları yazar, kapanan oturum yalnız eski dosyalarda kalır.
+kayit_dizini() {
+    local dizin; dizin=$(secenek @resurrect-dir '')
+    if [[ $dizin ]]; then dizin=${dizin/#\~/$HOME} dizin=${dizin//\$HOME/$HOME} dizin=${dizin//\$HOSTNAME/$(uname -n)}
+    elif [[ -d ~/.tmux/resurrect ]]; then dizin=~/.tmux/resurrect
+    else dizin=${XDG_DATA_HOME:-$HOME/.local/share}/tmux/resurrect; fi
+    echo "$dizin"
+}
+kayit_dosyalari() { local d; d=$(kayit_dizini); compgen -G "$d/tmux_resurrect_*.txt" | sort -r; }
+
+# Açık olmayan her oturumun en yeni kaydı: "K<TAB>sıra<TAB>ad<TAB>pencere sayısı<TAB>gün"; sıra dosya adındaki zamandan
+kayitlar() {
+    local dosyalar; mapfile -t dosyalar < <(kayit_dosyalari)
+    (( ${#dosyalar[@]} )) || return 0
+    awk -F'\t' 'FILENAME == ARGV[1] { acik[$0]; next }
+        ($1 == "window" || $1 == "pane") && !($2 in acik) {
+            if (!($2 in dosya)) dosya[$2] = FILENAME
+            if (dosya[$2] == FILENAME && $1 == "window") n[$2]++
+        }
+        END { for (s in dosya) { z = dosya[s]; sub(/.*_/, "", z)
+            printf "K\t%s%s\t%s\t%d\t%s.%s %s:%s\n", substr(z, 1, 8), substr(z, 10, 6), s, n[s],
+                substr(z, 7, 2), substr(z, 5, 2), substr(z, 10, 2), substr(z, 12, 2) } }' \
+        <(tmux list-sessions -F '#{session_name}' 2>/dev/null) "${dosyalar[@]}"
+}
+
+kayit_dosyasi() {
+    local dosya
+    while IFS= read -r dosya; do
+        awk -F'\t' -v s="$1" '$1 == "window" && $2 == s { bulundu = 1; exit } END { exit !bulundu }' "$dosya" && { echo "$dosya"; return; }
+    done < <(kayit_dosyalari)
+    return 1
+}
+
+# Oturumu en yeni kaydından kurar: pencereler, adları, bölmeler, dizinleri ve düzen. Bölmelerin içeriği ve çalışan programlar
+# gelmez (onlar resurrect'in bütün sunucuyu yükleyen prefix C-r'ında). Satırlar resurrect'in save.sh biçiminde: alanların
+# başındaki ":" boş alanı sekmeye karşı korur.
+kur() {
+    local ad=$1 dosya tur s pno etkin bayrak bno baslik dizin betkin pad yerlesim otomatik bolme etkin_pencere etkin_bolmeler=()
+    tmux has-session -t "=$ad" 2>/dev/null && return 0
+    dosya=$(kayit_dosyasi "$ad") || return 1
+    # Ayırıcı \037: sekme IFS'te boşluk sayılır, art arda sekmeler birleşip boş alan (başlıksız bölme) kayar
+    while IFS=$'\037' read -r tur s pno etkin bayrak bno baslik dizin betkin _; do
+        [[ $tur == pane && $s == "$ad" ]] || continue
+        dizin=${dizin#:}; [[ -d $dizin ]] || dizin=$HOME
+        if ! tmux has-session -t "=$ad" 2>/dev/null; then
+            bolme=$(tmux new-session -d -P -F '#{pane_id}' -s "$ad" -c "$dizin")
+            tmux move-window -s "=$ad:" -t "=$ad:$pno" 2>/dev/null
+        elif ! tmux list-windows -t "=$ad" -F '#{window_index}' | grep -qx "$pno"; then
+            bolme=$(tmux new-window -d -P -F '#{pane_id}' -t "=$ad:$pno" -c "$dizin")
+        else
+            bolme=$(tmux split-window -d -P -F '#{pane_id}' -t "=$ad:$pno" -c "$dizin")
+        fi
+        # Bölme no değil kimlik: pane-base-index kayıttan sonra değiştiyse no kayar
+        [[ $baslik ]] && tmux select-pane -t "$bolme" -T "$baslik"
+        [[ $betkin == 1 ]] && etkin_bolmeler+=("$bolme")
+    done < <(tr '\t' '\037' <"$dosya")
+    while IFS=$'\037' read -r tur s pno pad etkin bayrak yerlesim otomatik; do
+        [[ $tur == window && $s == "$ad" ]] || continue
+        tmux rename-window -t "=$ad:$pno" "${pad#:}"
+        [[ $otomatik == on ]] && tmux set-window-option -t "=$ad:$pno" automatic-rename on
+        tmux select-layout -t "=$ad:$pno" "$yerlesim" 2>/dev/null
+        [[ $etkin == 1 ]] && etkin_pencere="=$ad:$pno"
+    done < <(tr '\t' '\037' <"$dosya")
+    for bno in "${etkin_bolmeler[@]}"; do tmux select-pane -t "$bno"; done
+    [[ $etkin_pencere ]] && tmux select-window -t "$etkin_pencere"
+    return 0
+}
+
+# Kayıtlı oturumun pencereleri; çok bölmeli pencerenin düzeni kutularla, önizlemenin genişliğine ölçekli. Düzen tmux 3.8'in JSON
+# biçiminde ({"t":"p","w":..} yaprakları) ya da eski "sağlama,GxY,x,y{...}" dizgisinde; yapraklar bölme sırasıyla gelir.
+kayit_onizle() {
+    awk -F'\t' -v s="$2" -v gen="$(( $3 - 4 > 70 ? 70 : $3 - 4 ))" -v ev="$HOME" -v pembe="$PEMBE" -v yesil="$YESIL" \
+        -v sol="$SOLUK" -v r="$R" '
+    function kisa(d) { if (index(d, ev) == 1) d = "~" substr(d, length(ev) + 1); return d }
+    function son(d,   n, parca) { sub(/\/$/, "", d); n = split(d, parca, "/"); return n ? parca[n] : d }
+    function yuvarla(v) { return int(v + 0.5) }
+    # Kenar bitleri üst 1, alt 2, sol 4, sağ 8; hücrenin karakteri bitlerin toplamından (kesişimler ├ ┬ ┼ kendiliğinden)
+    function cizgi(y, x, bit) { if (!((y, x, bit) in kenar)) { kenar[y, x, bit]; izgara[y, x] += bit } }
+    function kutu(x0, y0, x1, y1,   x, y) {
+        for (x = x0; x < x1; x++) { cizgi(y0, x, 8); cizgi(y0, x + 1, 4); cizgi(y1, x, 8); cizgi(y1, x + 1, 4) }
+        for (y = y0; y < y1; y++) { cizgi(y, x0, 2); cizgi(y + 1, x0, 1); cizgi(y, x1, 2); cizgi(y + 1, x1, 1) }
+    }
+    # Harf sayısı ve kesme hem UTF-8 bilen awk (gawk) hem baytla çalışan awk (mawk) için doğru: bayt kipinde UTF-8 devam baytı
+    # sayılmaz, kesme harfin ortasına düşmez. Bayt aralığı UTF-8 kipinde geçersiz düzenli ifade: yalnız bayt kipinde kullanılır.
+    function uzunluk(t) { return utf ? length(t) : length(t) - gsub(devam, "", t) }
+    function kes(t, en,   i, n) {
+        if (utf) return substr(t, 1, en)
+        for (i = 1; i <= length(t); i++) if (substr(t, i, 1) !~ devam && ++n > en) return substr(t, 1, i - 1)
+        return t
+    }
+    # Etiket ilk hücresine bütün yazılır, kapladığı öteki hücreler atlanır
+    function yaz(y, x, metin, renk, en,   k, n) {
+        metin = kes(metin, en); n = uzunluk(metin)
+        if (!n) return
+        harf[y, x] = metin; boya[y, x] = renk
+        for (k = 1; k < n; k++) ortu[y, x + k]
+    }
+    function ciz(pno, yer,   tg, ty, n, t, a, i, G, Y, x0, y0, x1, y1, y, x, satir, onceki, h, rk) {
+        delete izgara; delete kenar; delete harf; delete boya; delete ortu; n = 0
+        if (substr(yer, 1, 1) == "{") {
+            t = yer; match(t, /"w":[0-9]+,"h":[0-9]+/); t = substr(t, RSTART, RLENGTH); gsub(/[^0-9,]/, "", t); split(t, a, ","); tg = a[1]; ty = a[2]
+            while (match(yer, /"t":"p","w":[0-9]+,"h":[0-9]+,"x":[0-9]+,"y":[0-9]+/)) {
+                t = substr(yer, RSTART, RLENGTH); yer = substr(yer, RSTART + RLENGTH); gsub(/[^0-9,]/, "", t); split(t, a, ",")
+                n++; w_[n] = a[2]; h_[n] = a[3]; x_[n] = a[4]; y_[n] = a[5]
+            }
+        } else {
+            sub(/^[0-9a-f]+,/, "", yer); match(yer, /[0-9]+x[0-9]+/); t = substr(yer, RSTART, RLENGTH); split(t, a, "x"); tg = a[1]; ty = a[2]
+            while (match(yer, /[0-9]+x[0-9]+,[0-9]+,[0-9]+,[0-9]+/)) {
+                t = substr(yer, RSTART, RLENGTH); yer = substr(yer, RSTART + RLENGTH); gsub(/x/, ",", t); split(t, a, ",")
+                n++; w_[n] = a[1]; h_[n] = a[2]; x_[n] = a[3]; y_[n] = a[4]
+            }
+        }
+        if (n < 2 || !tg || !ty) return
+        # Karakter iki kat uzun: yükseklik genişliğin yarısı oranında, 6-14 satır
+        G = gen - 1; Y = yuvarla(G * ty / tg / 2); if (Y < 6) Y = 6; if (Y > 14) Y = 14
+        for (i = 1; i <= n; i++) {
+            # Kenar tmux ayırıcısının üstünde: sol/üst kenar x-1 (pencere kenarında 0), sağ/alt x+w; komşu kutular kenarı paylaşır
+            x0 = yuvarla((x_[i] ? x_[i] - 1 : 0) * G / tg); x1 = yuvarla((x_[i] + w_[i]) * G / tg)
+            y0 = yuvarla((y_[i] ? y_[i] - 1 : 0) * Y / ty); y1 = yuvarla((y_[i] + h_[i]) * Y / ty)
+            kutu(x0, y0, x1, y1)
+            if (y1 - y0 > 1) yaz(y0 + 1, x0 + 1, (i - 1 + taban[pno]) " " son(dizin[pno, i]), etkin[pno, i] ? yesil : pembe, x1 - x0 - 1)
+            # Komut kutunun sağ alt köşesinde; kutu darsa sonu kesilip sağa yaslanır
+            if (y1 - y0 > 2) { t = kes(komut[pno, i], x1 - x0 - 1); yaz(y1 - 1, x1 - uzunluk(t), t, sol, x1 - x0 - 1) }
+        }
+        for (y = 0; y <= Y; y++) {
+            satir = "    "; onceki = ""
+            for (x = 0; x <= G; x++) {
+                if ((y, x) in ortu) continue
+                if ((y, x) in harf) { h = harf[y, x]; rk = boya[y, x] }
+                else { h = sekil[izgara[y, x] + 0]; rk = sol }
+                if (rk != onceki) { satir = satir r rk; onceki = rk }
+                satir = satir h
+            }
+            print satir r
+        }
+    }
+    BEGIN {
+        split(" ,│,│,│,─,┘,┐,┤,─,└,┌,├,─,┴,┬,┼", sk, ",")
+        for (i = 0; i < 16; i++) sekil[i] = sk[i + 1]
+        utf = length("ş") == 1; devam = "[\200-\277]"
+    }
+    $1 == "pane" && $2 == s {
+        if (!($3 in bolme)) taban[$3] = $6
+        bolme[$3]++; dizin[$3, bolme[$3]] = substr($8, 2); komut[$3, bolme[$3]] = $10; etkin[$3, bolme[$3]] = ($9 == 1)
+    }
+    $1 == "window" && $2 == s { sira[++np] = $3; ad[$3] = substr($4, 2); yerlesim[$3] = $7; aktif[$3] = ($5 == 1) }
+    END {
+        for (i = 1; i <= np; i++) { p = sira[i]
+            printf "\n  %s%2s%s %s%s%s  %s%d bölme  %s%s\n", pembe, p, r, aktif[p] ? yesil : "", ad[p], r, sol, bolme[p], kisa(dizin[p, 1]), r
+            if (bolme[p] > 1) ciz(p, yerlesim[p])
+        }
+    }' "$1"
+}
+
+# Kaydı unutur: oturumun satırları bütün kayıt dosyalarından silinir, dosyanın günü korunur (resurrect eskileri güne göre siler)
+unut() {
+    local dosya gecici
+    while IFS= read -r dosya; do
+        awk -F'\t' -v s="$1" '($1 == "window" || $1 == "pane" || $1 == "grouped_session") && $2 == s { bulundu = 1; exit } END { exit !bulundu }' "$dosya" || continue
+        gecici=$(mktemp "$dosya.XXXXXX")
+        awk -F'\t' -v s="$1" '!(($1 == "window" || $1 == "pane" || $1 == "grouped_session") && $2 == s)' "$dosya" >"$gecici" \
+            && touch -r "$dosya" "$gecici" && chmod --reference="$dosya" "$gecici" && mv -f "$gecici" "$dosya" || rm -f "$gecici"
+    done < <(kayit_dosyalari)
+}
+
 dizinler() {
     local makine=$1 ad=$1 yol ev renk gorunen
     [[ $makine == yerel ]] && ad=$YEREL renk=$YESIL || renk=$CAMGOBEGI
     calistir "$makine" "$DIZIN_KOMUTU" 2>/dev/null | while IFS= read -r yol; do
         ev=${ev:-$yol}
         [[ $yol == "$ev" || $yol == "$ev"/* ]] && gorunen="~${yol#"$ev"}" || gorunen=$yol
-        printf '%s|dizin|%s\t%s%s%s  %s%s%s\n' "$makine" "$yol" "$renk" "$ad" "$R" "$MOR" "$gorunen" "$R"
+        printf '%s|dizin|%s\t%s%s%s  %s%s%s\t%s%s%s  %s%s%s\n' "$makine" "$yol" "$renk" "$ad" "$R" "$MOR" "$gorunen" "$R" \
+            "$renk" "$ad" "$R" "$MOR" "$gorunen" "$R"
     done
 }
 
@@ -148,7 +320,7 @@ kimlik=$2
 makine=${kimlik%%|*} ne=${kimlik#*|}
 tur=${ne%%|*} deger=${ne#*|}
 case $tur in
-    dizin | yeni | yetki) ;;
+    dizin | yeni | yetki | kayit) ;;
     +) tur=arti ;;
     *) tur=oturum deger=$ne ;;
 esac
@@ -163,6 +335,15 @@ case ${1:-arayuz} in
             oturum) [[ $deger == *:* ]] || deger+=":"  # "=ad:" oturumun etkin bölmesi, "=ad:N" pencerenin
                     calistir "$makine" "tmux capture-pane -ep -t '$deger'" ;;
             dizin) calistir "$makine" "ls -A --color=always '$deger'" ;;
+            kayit)
+                dosya=$(kayit_dosyasi "$deger") || exit 0
+                z=${dosya##*_}
+                printf '%s↺ %s: kayıtlı oturum%s  %s%s.%s.%s %s:%s kaydı%s\n' "$TURUNCU$KALIN" "$deger" "$R" "$SOLUK" \
+                    "${z:6:2}" "${z:4:2}" "${z:0:4}" "${z:9:2}" "${z:11:2}" "$R"
+                kayit_onizle "$dosya" "$deger" "${FZF_PREVIEW_COLUMNS:-80}"
+                printf '\n  %s%-8s%s%s\n' "$PEMBE" enter "$R" "pencereler, bölmeler ve dizinlerle kur, bağlan"
+                printf '  %s%-8s%s%s\n' "$PEMBE" ctrl-x "$R" "kaydı unut (bütün kayıt dosyalarından)"
+                printf '\n%sBölme içerikleri ve çalışan programlar gelmez; hepsi için prefix C-r.%s\n' "$SOLUK" "$R" ;;
             arti)
                 printf '%s+ %s: yeni oturum%s\n\n' "$YESIL$KALIN" "$ad" "$R"
                 printf "  $PEMBE%-8s$R%s\n" enter "ev dizininde aç (oturum adı: $ad)" ctrl-f "önce dizin seç"
@@ -171,6 +352,7 @@ case ${1:-arayuz} in
                    printf '  %senter%s ile bağlantı açılır, onay adresi orada çıkar.\n  Tarayıcıda onaylayınca liste kendiliğinden yenilenir.\n' "$PEMBE" "$R" ;;
         esac ;;
     kapat)
+        [[ $tur == kayit ]] && { unut "$deger"; exit 0; }
         [[ $tur == oturum ]] || exit 0
         # Pencere satırı yalnız pencereyi kapatır
         if [[ $deger == *:* ]]; then calistir "$makine" "tmux kill-window -t '$deger'"; else calistir "$makine" "tmux kill-session -t '$deger'"; fi ;;
@@ -199,6 +381,11 @@ case ${1:-arayuz} in
             done >&2) && exec "$BEN"
             read -rsn1 -p "Onay alınamadı; bir tuşa bas." </dev/tty; exec "$BEN"
         fi
+        # Kayıtlı oturum önce kurulur, sonra açık oturum gibi bağlanılır
+        if [[ $tur == kayit ]]; then
+            kur "$deger" || { read -rsn1 -p "Kayıt okunamadı; bir tuşa bas." </dev/tty; exec "$BEN"; }
+            tur=oturum deger="=$deger"
+        fi
         # Aynı adla oturum varsa yenisi açılmaz, ona bağlanılır (-A); uzakta yerel $PWD yok, oturum ev dizininde açılır
         case $tur in
             oturum) komut="tmux -u attach -t '$deger'" ;;
@@ -221,6 +408,8 @@ case ${1:-arayuz} in
             exec "${SSH[@]}" -t "$(hedef "$makine")" "$komut"
         fi ;;
     arayuz)
+        # --exact: bulanık aramada "fir" _dotfiles'ın f-i'si ve "pencere"nin r'siyle eşleşirdi; her satırda geçen "pencere",
+        # "yeni oturum" gibi sözcükler yüzünden ilgisiz satırlar kalırdı. Bulanık arama için sorgunun başına '
         # Kabuğun fzf ayarı (--tmux açılır penceresi) burada istenmez: arayüz zaten açılır pencerede ya da tam ekranda
         eval "ek=($(secenek @oturum-fzf ''))"
         # ctrl-f ile açılan dizin listesinin makinesi: listede olmayan ad + enter yeni oturumu o makinede açar
@@ -235,6 +424,8 @@ case ${1:-arayuz} in
             --bind "ctrl-r:execute('$BEN' adlandir {1})+reload('$BEN' liste)" \
             --bind "ctrl-f:execute-silent(printf '%s' {1} > '$durum')+reload('$BEN' dizinler {1})" \
             --bind "ctrl-b:execute-silent(: > '$durum')+reload('$BEN' liste)" --bind '?:toggle-preview' \
+            --bind 'change:transform:[[ -n {q} ]] && echo "change-with-nth(3)" || echo "change-with-nth(2)"' --tiebreak index \
+            --exact \
             "${ek[@]}")
         [[ $? == 130 ]] && exit 0
         sorgu=$(sed -n 1p <<<"$cikti")

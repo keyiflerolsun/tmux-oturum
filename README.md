@@ -9,6 +9,8 @@ eriştiğin öteki makineler. Birini seçip enter'a bas; oturum hangi makinede o
 - **Tek bakışta:** her makinenin oturumları, pencereleri ve hangisine bağlı olduğun; seçili oturumun ekranı yanda.
 - **İç içe tmux yok:** uzak oturuma geçince terminal doğrudan uzak tmux'a bağlanır; `prefix d` ile kaldığın yere dönersin.
 - **Yeni oturum her yerde:** makinenin `+ yeni oturum` satırı, ya da `ctrl-f` ile o makinede bir dizin seçip orada.
+- **Kayıtlı oturumlar:** [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) kaydında olup açık olmayan oturumlar
+  bu makinenin altında `↺ kayıtlı` satırı; enter yalnız o oturumu kurar, bütün sunucuyu değil.
 - **Beklemez:** makineler aynı anda sorulur, yanıt vermeyen listeyi tutmaz; `esc` hemen kapatır.
 
 ## Kurulum
@@ -30,19 +32,20 @@ dizin önerileri için `zoxide`. Uzak makinede yalnız tmux.
 
 ## Kullanım
 
-tmux'ta `prefix g`, zsh'ta `ctrl-g`. Listede olmayan bir ad yazıp enter'a basmak o adla yeni oturum açar.
+tmux'ta `prefix g`, zsh'ta `ctrl-g`. Listede olmayan bir ad yazıp enter'a basmak o adla yeni oturum açar. Makine adıyla
+aramak o makinenin bütün satırlarını bırakır; bulanık arama için sorgunun başına `'`.
 
 | Tuş | İş |
 |---|---|
-| `enter` | Oturuma ya da pencereye geç; `+ yeni oturum` satırında o makinede yeni oturum |
-| `ctrl-x` | Oturumu kapat; pencere satırında yalnız pencereyi |
+| `enter` | Oturuma ya da pencereye geç; `+ yeni oturum` satırında o makinede yeni oturum; `↺ kayıtlı` satırında oturumu kur ve geç |
+| `ctrl-x` | Oturumu kapat; pencere satırında yalnız pencereyi; `↺ kayıtlı` satırında kaydı unut |
 | `ctrl-r` | Oturumun ya da pencerenin adını değiştir |
 | `ctrl-f` | Satırın makinesinde dizin seç (ev dizini, zoxide geçmişi, `/opt`, `/srv`, …) ve orada yeni oturum aç |
 | `ctrl-b` | Dizinlerden oturum listesine dön |
 | `?` | Önizlemeyi aç, kapat |
 
 Aynı adla oturum varsa yenisi açılmaz, ona geçilir. Bir oturumdaki son kabuğu kapatınca (`ctrl-d`) tmux'tan düşmezsin, önceki
-oturuma geçersin.
+oturuma geçersin. Kayıtlı oturum pencereleri, bölmeleri, dizinleri ve düzeniyle kurulur; çalışan programlar gelmez.
 
 ## Ayarlar
 

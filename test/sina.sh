@@ -2,7 +2,8 @@
 # Bu araç @keyiflerolsun tarafından | @KekikAkademi için yazılmıştır.
 
 # Liste sırası ve biçimi sahte makinelerle (sahte/: tmux, ssh, tailscale, uname): yerel önce, makine adı ilk satırda, "+" ve onay
-# satırı başta, son kullanılan oturum üstte, pencereleri altında. Kapalı ve Windows makine listede yok.
+# satırı başta, son kullanılan oturum üstte, pencereleri altında; yerelde kayıtlı (açık
+# olmayan) oturumlar en altta, yeniden eskiye. Kapalı ve Windows makine listede yok.
 cd "$(dirname "$0")" || exit 1
 beklenen='laptop  + yeni oturum  ctrl-f: dizin seç
         notlar   1 pencere
@@ -10,6 +11,8 @@ beklenen='laptop  + yeni oturum  ctrl-f: dizin seç
         blog     2 pencere
         ├ 1 nvim •
         └ 2 zsh
+        eski     2 pencere  ↺ kayıtlı 23.11 18:46
+        deneme   1 pencere  ↺ kayıtlı 21.11 22:07
 ev-pc   ! Tailscale onayı bekliyor  enter: onayla
 nas     + yeni oturum  ctrl-f: dizin seç
         yedek    1 pencere
@@ -20,5 +23,15 @@ vps     + yeni oturum  ctrl-f: dizin seç
         ├ 1 logs •
         └ 2 deploy'
 gecici=$(mktemp -d); trap 'rm -rf "$gecici"' EXIT
-cikti=$(PATH="$PWD/sahte:$PATH" XDG_RUNTIME_DIR=$gecici LC_ALL=C.UTF-8 ../scripts/oturum liste | cut -f2 | sed 's/\x1b\[[0-9;]*m//g')
-if [[ $cikti == "$beklenen" ]]; then echo "tamam"; else diff <(echo "$beklenen") <(echo "$cikti"); exit 1; fi
+# resurrect kayıtları: açık "blog" listede yok; "eski" en yeni kaydından (2 pencere), "deneme" yalnız eski dosyada
+kayit=$gecici/.local/share/tmux/resurrect; mkdir -p "$kayit"
+printf 'pane\teski\t1\t1\t:*\t1\t\t:/tmp\t1\tzsh\t:\nwindow\teski\t1\t:a\t1\t:*\tx\t:\n' >"$kayit/tmux_resurrect_20261121T220745.txt"
+printf 'pane\tdeneme\t1\t1\t:*\t1\t\t:/tmp\t1\tzsh\t:\nwindow\tdeneme\t1\t:a\t1\t:*\tx\t:\n' >>"$kayit/tmux_resurrect_20261121T220745.txt"
+printf 'window\teski\t1\t:a\t1\t:*\tx\t:\nwindow\teski\t2\t:b\t0\t:-\tx\t:\nwindow\tblog\t1\t:a\t1\t:*\tx\t:\n' >"$kayit/tmux_resurrect_20261123T184621.txt"
+cikti=$(PATH="$PWD/sahte:$PATH" HOME=$gecici XDG_DATA_HOME= XDG_RUNTIME_DIR=$gecici LC_ALL=C.UTF-8 ../scripts/oturum liste | cut -f2 | sed 's/\x1b\[[0-9;]*m//g')
+[[ $cikti == "$beklenen" ]] || { diff <(echo "$beklenen") <(echo "$cikti"); exit 1; }
+# Arama alanı (3.): makine adı her satırda, "nas" yazınca nas'ın bütün satırları kalır
+arama=$(PATH="$PWD/sahte:$PATH" HOME=$gecici XDG_DATA_HOME= XDG_RUNTIME_DIR=$gecici LC_ALL=C.UTF-8 ../scripts/oturum liste | cut -f3 \
+    | sed 's/\x1b\[[0-9;]*m//g' | awk '$1 == "nas"' | wc -l)
+[[ $arama == 3 ]] || { echo "arama alanında nas satırı $arama, beklenen 3"; exit 1; }
+echo tamam
