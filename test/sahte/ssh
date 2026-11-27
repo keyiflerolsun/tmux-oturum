@@ -6,6 +6,10 @@ case $makine:$komut in
     ev-pc:*) printf '# Tailscale SSH requires an additional check.\r\n# To authenticate, visit: https://login.tailscale.com/a/ornek\r\n' >&2; exit 255 ;;
     nas:*list-sessions*) printf 'O\t500\tyedek\t1\t0\nP\t500\tyedek\t1\tborg\t1\n+\n' ;;
     pi:*list-sessions*) printf '+\n' ;;
+    # tmux'suz makine: yanıt verir, listede satırı yok
+    mini:*list-sessions*) printf -- '-\n' ;;
+    # Yanıt vermeyen makine; süreç grubu dışındaki süreç çıktıyı açık tutar (timeout grubu öldürür, bayat ControlMaster yaşar)
+    kutu:*) setsid sleep 20 & sleep 20 ;;
     vps:*list-sessions*) printf 'O\t900\tweb\t2\t1\nP\t900\tweb\t1\tlogs\t1\nP\t900\tweb\t2\tdeploy\t0\n+\n' ;;
     vps:*capture-pane*) for i in 1 2 3 4 5 6; do printf '10.0.0.%s - - [22/Nov/2026:18:0%s] "GET / HTTP/2" 200 512\n' $i $i; done; printf 'vps:~ # \n' ;;
 esac

@@ -11,7 +11,8 @@ eriştiğin öteki makineler. Birini seçip enter'a bas; oturum hangi makinede o
 - **Yeni oturum her yerde:** makinenin `+ yeni oturum` satırı, ya da `ctrl-f` ile o makinede bir dizin seçip orada.
 - **Kayıtlı oturumlar:** [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) kaydında olup açık olmayan oturumlar
   bu makinenin altında `↺ kayıtlı` satırı; enter yalnız o oturumu kurar, bütün sunucuyu değil.
-- **Beklemez:** makineler aynı anda sorulur, yanıt vermeyen listeyi tutmaz; `esc` hemen kapatır.
+- **Beklemez:** makineler aynı anda sorulur, her birine en çok 2 sn; yanıt vermeyenler başlıkta sayılır, `ctrl-t` yeniden
+  dener. `esc` hemen kapatır.
 
 ## Kurulum
 
@@ -42,6 +43,7 @@ aramak o makinenin bütün satırlarını bırakır; bulanık arama için sorgun
 | `ctrl-r` | Oturumun ya da pencerenin adını değiştir |
 | `ctrl-f` | Satırın makinesinde dizin seç (ev dizini, zoxide geçmişi, `/opt`, `/srv`, …) ve orada yeni oturum aç |
 | `ctrl-b` | Dizinlerden oturum listesine dön |
+| `ctrl-t` | Listeyi yeniden yükle; yanıt vermeyen makineleri yeniden dener |
 | `?` | Önizlemeyi aç, kapat |
 
 Aynı adla oturum varsa yenisi açılmaz, ona geçilir. Bir oturumdaki son kabuğu kapatınca (`ctrl-d`) tmux'tan düşmezsin, önceki
@@ -58,6 +60,7 @@ oturuma geçersin. Kayıtlı oturum pencereleri, bölmeleri, dizinleri ve düzen
 | `@oturum-makineler` | (boş) | Tailscale dışındaki makineler: `~/.ssh/config`'teki adları, boşlukla ayrılmış |
 | `@oturum-onceye-don` | `on` | oturum kapanınca önceki oturuma geç |
 | `@oturum-fzf` | (boş) | fzf'e eklenecek seçenekler (renk vb.) |
+| `@oturum-sure` | `2` | makine başına bekleme üst sınırı (sn); aşan makine yanıt vermeyenlere düşer |
 
 ```tmux
 set -g @oturum-tus 'f'                    # prefix f
@@ -74,7 +77,9 @@ set -g @oturum-fzf "--color=bg+:#343746,pointer:#ff79c6"
   yoksa makine listede görünmez.
 - Tailscale SSH'ın onay (check) istediği makine sarı satırda görünür. Enter onay adresini verir; tarayıcıda onaylayınca liste
   yeniden açılır.
-- Her makineye en çok 5 sn beklenir. Bağlantı 10 dk açık tutulur, sonraki açılış ve önizlemeler hızlıdır.
+- Her makineye en çok `@oturum-sure` (2 sn) beklenir; yanıt vermeyen makineler başlıkta adlarıyla görünür, `ctrl-t` yeniden
+  dener. Bağlantı 10 dk açık tutulur, sonraki açılış ve önizlemeler hızlıdır. Makine yeniden başlayıp bağlantı bayatlarsa
+  ~10 sn'de kapanır, sonraki açılış yenisini kurar.
 
 ## Geliştirme
 

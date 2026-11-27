@@ -4,6 +4,7 @@
 # tmux-oturum: yerel makinenin, Tailscale'deki makinelerin ve @oturum-makineler'in tmux oturumları tek fzf listesinde.
 #   oturum                       arayüz (tmux'ta prefix g, zsh'ta ctrl-g)
 #   oturum liste                 fzf satırları "kimlik<TAB>görünen"
+#   oturum baslik                tuş rehberi ve yanıt vermeyen makineler (fzf başlığı)
 #   oturum dizinler <kimlik>     satırın makinesindeki dizinler
 #   oturum onizle | kapat | adlandir | baglan <kimlik>
 # Kimlik "makine|ne": makine "yerel", Tailscale ya da ssh config adı; ne "=oturum", "=oturum:pencere", "dizin|/yol", "yeni|ad",
@@ -13,15 +14,21 @@
 BEN="$(readlink -f "${BASH_SOURCE[0]}")"
 secenek() { local deger; deger=$(tmux show-option -gqv "$1" 2>/dev/null); echo "${deger:-$2}"; }
 
-# ControlMaster: ilk bağlantı 10 dk açık kalır, sonraki liste ve önizlemeler beklemez. C.UTF-8: tr_TR yerelinde OpenSSH büyük
-# I'lı ayar sözcüklerini (Include) tanımıyor. Tailscale makinelerinin host anahtarları $BILINEN'e makineler() yazar.
+# ControlMaster: ilk bağlantı 10 dk açık kalır, sonraki liste ve önizlemeler beklemez. ServerAlive: makine yeniden başlayınca ana
+# bağlantı bayatlar ve ona bağlanan her istemci TCP zaman aşımına (~2 dk) dek asılı kalırdı; 5 sn'de bir yoklanır, ~10 sn'de
+# kapanır. C.UTF-8: tr_TR yerelinde OpenSSH büyük I'lı ayar sözcüklerini (Include) tanımıyor. Tailscale makinelerinin host
+# anahtarları $BILINEN'e makineler() yazar.
 BILINEN="${XDG_RUNTIME_DIR:-/tmp}/tmux-oturum-bilinen"
-SSH=(env LC_ALL=C.UTF-8 ssh -o BatchMode=yes -o ConnectTimeout=3 -o ControlMaster=auto -o "ControlPath=${XDG_RUNTIME_DIR:-/tmp}/tmux-oturum-%C"
-     -o ControlPersist=10m -o "UserKnownHostsFile=~/.ssh/known_hosts $BILINEN")
+# Makine başına üst sınır (sn): soğuk bağlantı ölçümde 0,1-0,5 sn; aşan makine listede yanıt vermeyenlere düşer, ctrl-t yeniden dener
+SURE=$(secenek @oturum-sure 2)
+SSH=(env LC_ALL=C.UTF-8 ssh -o BatchMode=yes -o "ConnectTimeout=$SURE" -o ServerAliveInterval=5 -o ServerAliveCountMax=2
+     -o ControlMaster=auto -o "ControlPath=${XDG_RUNTIME_DIR:-/tmp}/tmux-oturum-%C" -o ControlPersist=10m
+     -o "UserKnownHostsFile=~/.ssh/known_hosts $BILINEN")
 EK=" $(secenek @oturum-makineler '') "
 FMT_O=$'O\t#{session_activity}\t#{session_name}\t#{session_windows}\t#{session_attached}'
 FMT_P=$'P\t#{session_activity}\t#{session_name}\t#{window_index}\t#{window_name}\t#{window_active}'
-LISTE_KOMUTU="tmux list-sessions -F '$FMT_O' 2>/dev/null; tmux list-windows -a -F '$FMT_P' 2>/dev/null; command -v tmux >/dev/null && echo +"
+# Son satır yanıtın işareti: tmux varsa "+" (yeni oturum satırı), yoksa "-" (makine yanıt verdi ama listede satırı yok)
+LISTE_KOMUTU="tmux list-sessions -F '$FMT_O' 2>/dev/null; tmux list-windows -a -F '$FMT_P' 2>/dev/null; command -v tmux >/dev/null && echo + || echo -"
 YEREL=$(uname -n)
 # Dracula: makine yeşil (yerel) / camgöbeği (uzak), oturum kalın, ayrıntı soluk, bağlı pembe, dizin mor, kayıtlı turuncu
 R=$'\e[0m' KALIN=$'\e[1m' SOLUK=$'\e[38;2;98;114;164m' YESIL=$'\e[38;2;80;250;123m' CAMGOBEGI=$'\e[38;2;139;233;253m'
@@ -100,16 +107,26 @@ bicimle() {
     done
 }
 
-# Makineler paralel, her biri en çok 5 sn: kapalı ya da girişte uzun çıktı basan makine listeyi bekletmez. Tailscale SSH "check"
-# kuralında ssh onay adresini stderr'e basıp bekler: makine onay satırı olur. Adres listede yok, ssh kesilince geçersiz kalır;
-# enter yenisini alır.
+# Bir makinenin satırları; en çok $SURE sn. Çıktı boruya değil dosyaya: ssh istemcisi uçlarını ana bağlantıya devreder, bayat ana
+# bağlantı timeout istemciyi öldürse de boruyu açık tutar ve liste onun TCP zaman aşımını beklerdi. Tailscale SSH "check"
+# kuralında ssh onay adresini stderr'e basıp bekler: makine onay satırı olur (adres listede yok, ssh kesilince geçersiz kalır;
+# enter yenisini alır). Ne satır ne işaret dönerse makine $OTURUM_HATA'ya yazılır.
+makine_satirlari() {
+    local makine=$1 cikti satirlar
+    cikti=$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/tmux-oturum-cikti.XXXXXX")
+    timeout "$SURE" "${SSH[@]}" "$(hedef "$makine")" "export LC_ALL=C.UTF-8; $LISTE_KOMUTU" </dev/null >"$cikti" 2>&1
+    satirlar=$(tr -d "\r" <"$cikti" | grep -aE $'^[OP]\t|^[+-]$|^# To authenticate, visit: https://login\\.tailscale\\.com/')
+    rm -f "$cikti"
+    if [[ $satirlar ]]; then ham 1 "$makine" <<<"$satirlar"
+    elif [[ $OTURUM_HATA ]]; then echo "$makine" >>"$OTURUM_HATA"; fi
+}
+
+# Makineler paralel: kapalı ya da yanıtı geç kalan makine listeyi en çok $SURE sn bekletir
 liste() {
+    [[ $OTURUM_HATA ]] && : >"$OTURUM_HATA"
     {
         { bash -c "$LISTE_KOMUTU"; kayitlar; } | ham 0 yerel
-        for makine in $(makineler); do
-            timeout 5 "${SSH[@]}" "$(hedef "$makine")" "export LC_ALL=C.UTF-8; $LISTE_KOMUTU" 2>&1 | tr -d "\r" \
-                | grep -aE $'^[OP]\t|^\\+$|^# To authenticate, visit: https://login\\.tailscale\\.com/' | ham 1 "$makine" &
-        done
+        for makine in $(makineler); do makine_satirlari "$makine" & done
         wait
     } | sort -t$'\t' -k1,1n -k2,2 -k3,3n -k4,4rn -k5,5 -k6,6n -k7,7n | cut -f8- | bicimle
 }
@@ -291,13 +308,20 @@ dizinler() {
     done
 }
 
-# Tuş rehberi: iki satır kısayol, bir satır ipucu, ayırıcı çizgi; 54 sütun (onizleme_yeri liste sütununu bundan dar tutmaz)
+# Tuş rehberi: iki satır kısayol, bir satır ipucu, ayırıcı çizgi; 54 sütun (onizleme_yeri liste sütununu bundan dar tutmaz).
+# Son listede yanıt vermeyen makine varsa ipucunun yerinde onlar ve ctrl-t; liste her yüklenince fzf yeniden ister.
 baslik() {
     local t=$PEMBE a=$SOLUK
     tus() { local d=$2; [[ $3 ]] && d=$(dolgu "$2" "$3"); printf '%s%s%s%s%s' "$t" "$(dolgu "$1" 7)" "$R$a" "$d" "$R"; }
     printf '%s%s%s\n' "$(tus enter bağlan 11)" "$(tus ctrl-x kapat 11)" "$(tus ctrl-r 'ad değiştir')"
     printf '%s%s%s\n' "$(tus ctrl-f 'dizin seç' 11)" "$(tus ctrl-b oturumlar 11)" "$(tus '?' önizleme)"
-    printf '%sYeni oturum: adını yazıp enter%sa bas%s\n' "$SARI" "'" "$R"
+    local yok=()
+    [[ -s $OTURUM_HATA ]] && mapfile -t yok < <(sort "$OTURUM_HATA")
+    if (( ${#yok[@]} )); then
+        printf '%s✗ %d makine yanıt vermedi:%s %s  %s%s%s%s\n' "$TURUNCU" "${#yok[@]}" "$R" "${yok[*]}" "$t" ctrl-t "$R$a yeniden dene" "$R"
+    else
+        printf '%sYeni oturum: adını yazıp enter%sa bas%s\n' "$SARI" "'" "$R"
+    fi
     printf '%s%s%s' "$a" "$(printf '─%.0s' $(seq 54))" "$R"
 }
 
@@ -329,6 +353,7 @@ ad=$makine; [[ $makine == yerel ]] && ad=$YEREL
 
 case ${1:-arayuz} in
     liste) liste ;;
+    baslik) baslik ;;
     dizinler) dizinler "${makine:-yerel}" ;;
     onizle)
         case $tur in
@@ -416,8 +441,9 @@ case ${1:-arayuz} in
         eval "ek=($(secenek @oturum-fzf ''))"
         # ctrl-f ile açılan dizin listesinin makinesi: listede olmayan ad + enter yeni oturumu o makinede açar
         durum=$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/tmux-oturum-durum.XXXXXX")
-        trap 'rm -f "$durum"' EXIT
-        # Listeyi fzf başlatır: esc'te onu öldürüp hemen çıkar (boruyla verilince yanıt vermeyen makinenin 5 sn'si beklenirdi)
+        OTURUM_HATA=$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/tmux-oturum-hata.XXXXXX"); export OTURUM_HATA
+        trap 'rm -f "$durum" "$OTURUM_HATA"' EXIT
+        # Listeyi fzf başlatır: esc'te onu öldürüp hemen çıkar (boruyla verilince yanıt vermeyen makinenin süresi beklenirdi)
         cikti=$(FZF_DEFAULT_COMMAND="'$BEN' liste" FZF_DEFAULT_OPTS='' fzf --ansi --print-query --delimiter '\t' --with-nth 2 --layout reverse \
             --prompt 'oturum ❯ ' --pointer '▶' --scrollbar '▌▐' \
             --header "$(baslik)" \
@@ -426,6 +452,7 @@ case ${1:-arayuz} in
             --bind "ctrl-r:execute('$BEN' adlandir {1})+reload('$BEN' liste)" \
             --bind "ctrl-f:execute-silent(printf '%s' {1} > '$durum')+reload('$BEN' dizinler {1})" \
             --bind "ctrl-b:execute-silent(: > '$durum')+reload('$BEN' liste)" --bind '?:toggle-preview' \
+            --bind "ctrl-t:execute-silent(: > '$durum')+reload('$BEN' liste)" --bind "load:transform-header('$BEN' baslik)" \
             --bind 'change:transform:[[ -n {q} ]] && echo "change-with-nth(3)" || echo "change-with-nth(2)"' --tiebreak index \
             --exact \
             "${ek[@]}")

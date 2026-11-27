@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sahte Tailscale: dört açık Linux makine (ev-pc SSH onayı istiyor), bir kapalı, bir Windows
+# Sahte Tailscale: altı açık Linux makine (ev-pc SSH onayı istiyor, mini'de tmux yok, kutu yanıt vermiyor), bir kapalı, bir Windows
 cat <<'J'
 {"Peer": {
  "a": {"DNSName": "nas.ornek.ts.net.", "Online": true, "OS": "linux", "sshHostKeys": ["ssh-ed25519 AAAAnas"]},
@@ -7,5 +7,7 @@ cat <<'J'
  "c": {"DNSName": "vps.ornek.ts.net.", "Online": true, "OS": "linux", "sshHostKeys": ["ssh-ed25519 AAAAvps"]},
  "d": {"DNSName": "ev-pc.ornek.ts.net.", "Online": true, "OS": "linux", "sshHostKeys": ["ssh-ed25519 AAAAev"]},
  "e": {"DNSName": "eski.ornek.ts.net.", "Online": false, "OS": "linux", "sshHostKeys": ["ssh-ed25519 AAAAeski"]},
- "f": {"DNSName": "oyun.ornek.ts.net.", "Online": true, "OS": "windows"}}}
+ "f": {"DNSName": "oyun.ornek.ts.net.", "Online": true, "OS": "windows"},
+ "g": {"DNSName": "mini.ornek.ts.net.", "Online": true, "OS": "linux", "sshHostKeys": ["ssh-ed25519 AAAAmini"]},
+ "h": {"DNSName": "kutu.ornek.ts.net.", "Online": true, "OS": "linux", "sshHostKeys": ["ssh-ed25519 AAAAkutu"]}}}
 J
